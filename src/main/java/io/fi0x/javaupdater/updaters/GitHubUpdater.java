@@ -1,5 +1,6 @@
-package io.fi0x.javaupdater;
+package io.fi0x.javaupdater.updaters;
 
+import io.fi0x.javaupdater.IUpdater;
 import lombok.extern.slf4j.Slf4j;
 import org.json.simple.JSONArray;
 import org.json.simple.JSONObject;
@@ -8,39 +9,68 @@ import org.json.simple.parser.JSONParser;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.io.InvalidObjectException;
 import java.net.*;
 import java.nio.charset.StandardCharsets;
-import java.text.ParseException;
-import java.text.SimpleDateFormat;
 import java.util.ArrayList;
-import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
 
 @Slf4j
-public class JavaUpdater
+public class GitHubUpdater implements IUpdater
 {
-    private static String version;
-    private static final String releaseUrl = "https://api.github.com/repos/Fi0x/EDCT/releases";
+    private final String releaseUrl; // = "https://api.github.com/repos/Fi0x/EDCT/releases";
+    private final String currentVersion;
+    private final String expectedAssetName;
 
-    public static void checkForUpdates()
+    private String newestVersion;
+    Map<String, ArrayList<String>> releases;
+
+    public GitHubUpdater(String releaseUrl, String currentVersion, String expectedAssetName)
+    {
+        this.releaseUrl = releaseUrl;
+        this.currentVersion = currentVersion;
+        this.expectedAssetName = expectedAssetName;
+    }
+
+    @Override
+    public boolean hasNewerVersion()
     {
     }
 
-    public static ArrayList<String> getNewerVersion()
+    @Override
+    public String getDownloadUrl()
     {
-        String response = getReleases();
-        if (response == null || response.equals("")) return null;
+        loadNewestVersion();
 
-        Map<String, ArrayList<String>> releases = getReleases(response);
+        return isNewer(currentVersion, newestVersion) ? releases.get(newestVersion).get(1) : null;
+    }
 
-        String newestVersion = version;
-        for (Map.Entry<String, ArrayList<String>> version : releases.entrySet())
+    @Override
+    public String getWebsiteUrl()
+    {
+    }
+
+    private void loadNewestVersion() throws InvalidObjectException
+    {
+        if (releases == null)
         {
-            if (isNewer(newestVersion, version.getKey())) newestVersion = version.getKey();
+            String response = getReleases();
+            if (response == null || response.isEmpty())
+                throw new InvalidObjectException("Could not retrieve the correct release-json from the update-url");
+
+            releases = getReleases(response);
         }
 
-        return isNewer(version, newestVersion) ? releases.get(newestVersion) : null;
+        if (newestVersion == null)
+        {
+            newestVersion = currentVersion;
+
+            for (Map.Entry<String, ArrayList<String>> version : releases.entrySet())
+            {
+                if (isNewer(newestVersion, version.getKey())) newestVersion = version.getKey();
+            }
+        }
     }
 
     private static boolean isNewer(String currentVersion, String nextVersion)
@@ -69,30 +99,9 @@ public class JavaUpdater
         return currentParts.get(3) < nextParts.get(3);
     }
 
-    public static String getReleases()
+    public String getReleases() throws IOException, InterruptedException
     {
-        Map<String, String> params = new HashMap<>();
-
-        int counter = 0;
-        while (counter < 3)
-        {
-            counter++;
-            try
-            {
-                return sendHTTPRequest(releaseUrl, "GET", params, true);
-            } catch (InterruptedException ignored)
-            {
-                return null;
-            } catch (IOException e)
-            {
-                System.out.println("Warning: Could not find out if there is a newer version");
-                e.printStackTrace();
-                return null;
-            } catch (HtmlConnectionException ignored)
-            {
-            }
-        }
-        return null;
+        return sendHTTPRequest(releaseUrl, "GET", new HashMap<>(), true);
     }
 
     public static Map<String, ArrayList<String>> getReleases(String jsonString)
@@ -112,15 +121,11 @@ public class JavaUpdater
                 String url = releaseJson.get("html_url").toString();
 
                 JSONArray assets = (JSONArray) releaseJson.get("assets");
-                String runExeUrl = getAssetUrl(assets, Main.VersionType.PORTABLE);
-                String installUrl = getAssetUrl(assets, Main.VersionType.INSTALLER);
-                String jarUrl = getAssetUrl(assets, Main.VersionType.JAR);
+                String downloadUrl = getAssetUrl(assets);
 
                 ArrayList<String> urls = new ArrayList<>();
                 urls.add(url);
-                urls.add(runExeUrl);
-                urls.add(installUrl);
-                urls.add(jarUrl);
+                urls.add(downloadUrl);
 
                 releaseDates.put(tag, urls);
             }
@@ -133,33 +138,21 @@ public class JavaUpdater
         return releaseDates;
     }
 
-    private static String getAssetUrl(JSONArray jsonAssets, Main.VersionType portable)
+    private String getAssetUrl(JSONArray jsonAssets)
     {
         for (Object asset : jsonAssets)
         {
             JSONObject assetJson = (JSONObject) asset;
-            switch (portable)
-            {
-                case PORTABLE:
-                    if (assetJson.get("name").equals("EDCT.exe"))
-                        return assetJson.get("browser_download_url").toString();
-                    break;
-                case INSTALLER:
-                    if (assetJson.get("name").equals("edctsetup.exe"))
-                        return assetJson.get("browser_download_url").toString();
-                    break;
-                case JAR:
-                    if (assetJson.get("name").equals("EDCT.jar"))
-                        return assetJson.get("browser_download_url").toString();
-                    break;
-            }
+
+            if (expectedAssetName == null || expectedAssetName.equals(assetJson.get("name")))
+                return assetJson.get("browser_download_url").toString();
         }
 
         return null;
     }
 
     public static String sendHTTPRequest(String endpoint, String requestType, Map<String, String> parameters, boolean ignore429)
-            throws IOException, InterruptedException, HtmlConnectionException
+            throws IOException, InterruptedException
     {
         if (!canRequest(ignore429))
             return null;
@@ -181,7 +174,7 @@ public class JavaUpdater
         {
             System.out.println("Could not establish a connection to the server for request: " + endpoint);
             e.printStackTrace(); // Code 995
-            throw new HtmlConnectionException();
+            throw new ConnectException();
         }
         StringBuilder content = new StringBuilder();
         if (status == 200)
