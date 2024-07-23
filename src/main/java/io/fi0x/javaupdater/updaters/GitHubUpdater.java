@@ -34,24 +34,27 @@ public class GitHubUpdater implements IUpdater
     }
 
     @Override
-    public boolean hasNewerVersion()
+    public boolean hasNewerVersion() throws IOException, InterruptedException
     {
+        loadNewestVersion();
+        return isNewer(currentVersion, newestVersion);
     }
 
     @Override
-    public String getDownloadUrl()
+    public String getDownloadUrl() throws IOException, InterruptedException
     {
         loadNewestVersion();
-
         return isNewer(currentVersion, newestVersion) ? releases.get(newestVersion).get(1) : null;
     }
 
     @Override
-    public String getWebsiteUrl()
+    public String getWebsiteUrl() throws IOException, InterruptedException
     {
+        loadNewestVersion();
+        return isNewer(currentVersion, newestVersion) ? releases.get(newestVersion).get(0) : null;
     }
 
-    private void loadNewestVersion() throws InvalidObjectException
+    private void loadNewestVersion() throws IOException, InterruptedException
     {
         if (releases == null)
         {
@@ -104,7 +107,7 @@ public class GitHubUpdater implements IUpdater
         return sendHTTPRequest(releaseUrl, "GET", new HashMap<>(), true);
     }
 
-    public static Map<String, ArrayList<String>> getReleases(String jsonString)
+    public Map<String, ArrayList<String>> getReleases(String jsonString)
     {
         Map<String, ArrayList<String>> releaseDates = new HashMap<>();
 
