@@ -1,10 +1,13 @@
 package io.fi0x.javaupdater.updaters;
 
 import io.fi0x.javaupdater.IUpdater;
-import lombok.extern.slf4j.Slf4j;
+import io.fi0x.javaupdater.IVersion;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.java.Log;
 import org.json.simple.JSONArray;
 import org.json.simple.JSONObject;
 import org.json.simple.parser.JSONParser;
+import org.json.simple.parser.ParseException;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -16,50 +19,44 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
 
-@Slf4j
+@Log
+@RequiredArgsConstructor
 public class GitHubUpdater implements IUpdater
 {
+    private final IVersion currentVersion;
     private final String releaseUrl; // = "https://api.github.com/repos/Fi0x/EDCT/releases";
-    private final String currentVersion;
     private final String expectedAssetName;
 
     private String newestVersion;
-    Map<String, ArrayList<String>> releases;
+    private Map<String, ArrayList<String>> releases;
 
-    public GitHubUpdater(String releaseUrl, String currentVersion, String expectedAssetName)
+    @Override
+    public boolean hasNewerVersion() throws IOException, ParseException
     {
-        this.releaseUrl = releaseUrl;
-        this.currentVersion = currentVersion;
-        this.expectedAssetName = expectedAssetName;
+        loadNewestVersion();
+        return isNewer(currentVersion.getCurrentVersion(), newestVersion);
     }
 
     @Override
-    public boolean hasNewerVersion() throws IOException, InterruptedException
+    public String getDownloadUrl() throws IOException, ParseException
     {
         loadNewestVersion();
-        return isNewer(currentVersion, newestVersion);
+        return isNewer(currentVersion.getCurrentVersion(), newestVersion) ? releases.get(newestVersion).get(1) : null;
     }
 
     @Override
-    public String getDownloadUrl() throws IOException, InterruptedException
+    public String getWebsiteUrl() throws IOException, ParseException
     {
         loadNewestVersion();
-        return isNewer(currentVersion, newestVersion) ? releases.get(newestVersion).get(1) : null;
+        return isNewer(currentVersion.getCurrentVersion(), newestVersion) ? releases.get(newestVersion).get(0) : null;
     }
 
-    @Override
-    public String getWebsiteUrl() throws IOException, InterruptedException
-    {
-        loadNewestVersion();
-        return isNewer(currentVersion, newestVersion) ? releases.get(newestVersion).get(0) : null;
-    }
-
-    private void loadNewestVersion() throws IOException, InterruptedException
+    private void loadNewestVersion() throws IOException, ParseException
     {
         if (releases == null)
         {
             String response = getReleases();
-            if (response == null || response.isEmpty())
+            if (response.isEmpty())
                 throw new InvalidObjectException("Could not retrieve the correct release-json from the update-url");
 
             releases = getReleases(response);
@@ -67,7 +64,7 @@ public class GitHubUpdater implements IUpdater
 
         if (newestVersion == null)
         {
-            newestVersion = currentVersion;
+            newestVersion = currentVersion.getCurrentVersion();
 
             for (Map.Entry<String, ArrayList<String>> version : releases.entrySet())
             {
@@ -76,7 +73,7 @@ public class GitHubUpdater implements IUpdater
         }
     }
 
-    private static boolean isNewer(String currentVersion, String nextVersion)
+    private boolean isNewer(String currentVersion, String nextVersion)
     {
         ArrayList<Integer> currentParts = new ArrayList<>();
         ArrayList<Integer> nextParts = new ArrayList<>();
@@ -102,12 +99,12 @@ public class GitHubUpdater implements IUpdater
         return currentParts.get(3) < nextParts.get(3);
     }
 
-    public String getReleases() throws IOException, InterruptedException
+    private String getReleases() throws IOException
     {
-        return sendHTTPRequest(releaseUrl, "GET", new HashMap<>(), true);
+        return sendHTTPRequest(releaseUrl, new HashMap<>());
     }
 
-    public Map<String, ArrayList<String>> getReleases(String jsonString)
+    private Map<String, ArrayList<String>> getReleases(String jsonString) throws ParseException
     {
         Map<String, ArrayList<String>> releaseDates = new HashMap<>();
 
@@ -134,8 +131,8 @@ public class GitHubUpdater implements IUpdater
             }
         } catch (org.json.simple.parser.ParseException e)
         {
-            System.out.println("Could not convert release-json: " + jsonString);
-            e.printStackTrace();
+            log.warning("Could not convert release-json: " + jsonString);
+            throw e;
         }
 
         return releaseDates;
@@ -154,16 +151,12 @@ public class GitHubUpdater implements IUpdater
         return null;
     }
 
-    public static String sendHTTPRequest(String endpoint, String requestType, Map<String, String> parameters, boolean ignore429)
-            throws IOException, InterruptedException
+    private String sendHTTPRequest(String endpoint, Map<String, String> parameters) throws IOException
     {
-        if (!canRequest(ignore429))
-            return null;
-
         endpoint += getParamsString(parameters);
         URL url = cleanUpUrl(endpoint);
         HttpURLConnection con = (HttpURLConnection) url.openConnection();
-        con.setRequestMethod(requestType);
+        con.setRequestMethod("GET");
         con.setRequestProperty("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36");
 
         con.setConnectTimeout(5000);
@@ -175,9 +168,8 @@ public class GitHubUpdater implements IUpdater
             status = con.getResponseCode();
         } catch (IOException e)
         {
-            System.out.println("Could not establish a connection to the server for request: " + endpoint);
-            e.printStackTrace(); // Code 995
-            throw new ConnectException();
+            log.warning("Could not establish a connection to the server for request: " + endpoint);
+            throw new ConnectException(e.getMessage());
         }
         StringBuilder content = new StringBuilder();
         if (status == 200)
@@ -192,26 +184,21 @@ public class GitHubUpdater implements IUpdater
                 }
             } catch (SocketTimeoutException e)
             {
-                System.out.println("A http request timed out");
-                e.printStackTrace();
+                log.warning("A http request timed out");
+                throw new ConnectException(e.getMessage());
             }
             in.close();
         } else if (status == 429)
-            System.out.println("Received a 429 status code from a website\n\tUrl was: " + url); // Code 429
+            log.warning("Received a 429 status code from a website\n\tUrl was: " + url);
         else if (status != 0)
-            System.out.println("Received a bad HTTP response: " + status + "\n\tFor url: " + url);
+            log.warning("Received a bad HTTP response: " + status + "\n\tFor url: " + url);
 
         con.disconnect();
 
         return content.toString();
     }
 
-    private static boolean canRequest(boolean ignore429) throws IOException, InterruptedException
-    {
-        return true;
-    }
-
-    private static String getParamsString(Map<String, String> params)
+    private String getParamsString(Map<String, String> params)
     {
         StringBuilder result = new StringBuilder();
 
@@ -224,10 +211,10 @@ public class GitHubUpdater implements IUpdater
         }
 
         String resultString = result.toString();
-        return resultString.length() > 0 ? "?" + resultString.substring(0, resultString.length() - 1) : "";
+        return !resultString.isEmpty() ? "?" + resultString.substring(0, resultString.length() - 1) : "";
     }
 
-    private static URL cleanUpUrl(String endpoint) throws MalformedURLException
+    private URL cleanUpUrl(String endpoint) throws MalformedURLException
     {
         return new URL(endpoint
                 .replace(" ", "%20")
