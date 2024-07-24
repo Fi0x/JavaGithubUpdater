@@ -1,6 +1,7 @@
 package io.fi0x.javaupdater.updaters;
 
 import io.fi0x.javaupdater.IUpdater;
+import io.fi0x.javaupdater.IUrlHolder;
 import io.fi0x.javaupdater.IVersion;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.java.Log;
@@ -24,7 +25,7 @@ import java.util.Map;
 public class GitHubUpdater implements IUpdater
 {
     private final IVersion currentVersion;
-    private final String releaseUrl; // = "https://api.github.com/repos/Fi0x/EDCT/releases";
+    private final IUrlHolder releaseUrl;
     private final String expectedAssetName;
 
     private String newestVersion;
@@ -101,7 +102,7 @@ public class GitHubUpdater implements IUpdater
 
     private String getReleases() throws IOException
     {
-        return sendHTTPRequest(releaseUrl, new HashMap<>());
+        return sendHTTPRequest(releaseUrl.getReleaseUrl(), new HashMap<>());
     }
 
     private Map<String, ArrayList<String>> getReleases(String jsonString) throws ParseException
